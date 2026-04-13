@@ -35,8 +35,10 @@ class ComprehensiveIDPSystem:
             if 'error' in parsed_result:
                 return parsed_result
             
-            # 4. 提取文本和表格
+            # 4. 提取文本、标题、正文和表格
             text = '\n'.join(parsed_result.get('text', []))
+            headings = parsed_result.get('headings', [])
+            body_text = parsed_result.get('body_text', [])
             tables = parsed_result.get('tables', [])
             
             # 5. 处理图片（如果有）
@@ -82,6 +84,8 @@ class ComprehensiveIDPSystem:
                 'file_size': size,
                 'processed_at': datetime.now().isoformat(),
                 'text': text,
+                'headings': headings,
+                'body_text': body_text,
                 'structured_data': structured_data,
                 'tables': tables
             }
@@ -139,6 +143,13 @@ if __name__ == "__main__":
     else:
         print("处理成功！")
         print(f"提取的文本: {result['text'][:500]}")
+        print(f"提取的标题数量: {len(result['headings'])}")
+        if result['headings']:
+            print("提取的标题:")
+            for i, heading in enumerate(result['headings'][:5]):  # 只显示前5个标题
+                print(f"  {i+1}. {heading['text']}")
+            if len(result['headings']) > 5:
+                print(f"  ... 等{len(result['headings'])-5}个标题")
         print(f"提取的结构化数据: {result['structured_data']}")
         print(f"提取的表格数量: {len(result['tables'])}")
         print(f"结果已保存到: {os.path.join(config['output_dir'], f"{os.path.splitext(os.path.basename(document_path))[0]}_result.json")}")

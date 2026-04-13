@@ -16,12 +16,24 @@ class AdvancedDocumentParser:
             content = {
                 'text': [],
                 'tables': [],
-                'images': []
+                'images': [],
+                'headings': [],
+                'body_text': []
             }
             
-            # 提取文本
+            # 提取文本和标题
             for paragraph in doc.paragraphs:
-                content['text'].append(paragraph.text)
+                text = paragraph.text
+                if text.strip():
+                    # 判断是否为标题
+                    style_name = paragraph.style.name
+                    if style_name.startswith('Heading'):
+                        content['headings'].append({
+                            'text': text,
+                            'level': int(style_name.split(' ')[1]) if len(style_name.split(' ')) > 1 else 1
+                        })
+                    else:
+                        content['body_text'].append(text)
             
             # 提取表格
             for table in doc.tables:
@@ -29,7 +41,10 @@ class AdvancedDocumentParser:
                 for row in table.rows:
                     row_data = [cell.text for cell in row.cells]
                     table_data.append(row_data)
-                content['tables'].append(table_data)
+                content['tables'].append({
+                    'data': table_data,
+                    'type': 'table'
+                })
             
             # 提取图片
             # 这里使用python-docx的图片提取功能
@@ -44,7 +59,9 @@ class AdvancedDocumentParser:
         try:
             content = {
                 'text': [],
-                'tables': []
+                'tables': [],
+                'headings': [],
+                'body_text': []
             }
             
             # 使用PyPDF2提取文本
@@ -52,14 +69,54 @@ class AdvancedDocumentParser:
                 reader = PyPDF2.PdfReader(file)
                 for page_num in range(len(reader.pages)):
                     page = reader.pages[page_num]
-                    content['text'].append(page.extract_text())
+                    page_text = page.extract_text()
+                    content['text'].append(page_text)
+                    
+                    # 识别标题和正文
+                    if page_text:
+                        lines = page_text.split('\n')
+                        for line in lines:
+                            line = line.strip()
+                            if line:
+                                # 简单的标题识别规则
+                                # 1. 全部大写
+                                # 2. 以数字或序号开头（如"1. "、"2.1 "）
+                                # 3. 长度较短（通常标题不会太长）
+                                is_heading = False
+                                
+                                # 规则1：全部大写
+                                if line.isupper():
+                                    is_heading = True
+                                # 规则2：以数字或序号开头
+                                elif len(line) < 100 and (line.startswith(tuple('0123456789')) or '．' in line or '.' in line):
+                                    # 检查是否是列表项或标题
+                                    if any(pattern in line for pattern in ['章', '节', '条', '款', '项', '目']):
+                                        is_heading = True
+                                    # 检查是否是类似"1.1 "的格式
+                                    elif len(line.split(' ')[0]) < 10 and ('.' in line.split(' ')[0] or '．' in line.split(' ')[0]):
+                                        is_heading = True
+                                # 规则3：长度较短且可能是标题
+                                elif len(line) < 50 and (line.endswith('：') or line.endswith(':')):
+                                    is_heading = True
+                                
+                                if is_heading:
+                                    content['headings'].append({
+                                        'text': line,
+                                        'page': page_num + 1
+                                    })
+                                else:
+                                    content['body_text'].append(line)
             
             # 集成Camelot提取表格
             try:
                 import camelot
                 tables = camelot.read_pdf(file_path, pages='all', flavor='lattice')
-                for table in tables:
-                    content['tables'].append(table.df.to_dict('records'))
+                for i, table in enumerate(tables):
+                    content['tables'].append({
+                        'data': table.df.to_dict('records'),
+                        'type': 'table',
+                        'page': table.page
+                    })
             except ImportError:
                 pass  # 如果没有安装Camelot，跳过表格提取
             
@@ -81,15 +138,67 @@ class AdvancedDocumentParser:
             else:
                 gray = image
             
-            # 简单的图像信息
-            return {
-                'text': [],
-                'image_info': {
-                    'width': image.shape[1],
-                    'height': image.shape[0],
-                    'channels': image.shape[2] if len(image.shape) == 3 else 1
+            # 尝试进行OCR
+            try:
+                from AdvancedOCRProcessor import AdvancedOCRProcessor
+                ocr_processor = AdvancedOCRProcessor()
+                ocr_result = ocr_processor.ocr_image(file_path)
+                
+                content = {
+                    'text': [],
+                    'headings': [],
+                    'body_text': [],
+                    'image_info': {
+                        'width': image.shape[1],
+                        'height': image.shape[0],
+                        'channels': image.shape[2] if len(image.shape) == 3 else 1
+                    }
                 }
-            }
+                
+                if 'text' in ocr_result and ocr_result['text']:
+                    content['text'].append(ocr_result['text'])
+                    
+                    # 识别标题和正文
+                    lines = ocr_result['text'].split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            # 简单的标题识别规则
+                            is_heading = False
+                            
+                            # 规则1：全部大写
+                            if line.isupper():
+                                is_heading = True
+                            # 规则2：以数字或序号开头
+                            elif len(line) < 100 and (line.startswith(tuple('0123456789')) or '．' in line or '.' in line):
+                                # 检查是否是列表项或标题
+                                if any(pattern in line for pattern in ['章', '节', '条', '款', '项', '目']):
+                                    is_heading = True
+                                # 检查是否是类似"1.1 "的格式
+                                elif len(line.split(' ')[0]) < 10 and ('.' in line.split(' ')[0] or '．' in line.split(' ')[0]):
+                                    is_heading = True
+                            # 规则3：长度较短且可能是标题
+                            elif len(line) < 50 and (line.endswith('：') or line.endswith(':')):
+                                is_heading = True
+                            
+                            if is_heading:
+                                content['headings'].append({
+                                    'text': line
+                                })
+                            else:
+                                content['body_text'].append(line)
+                
+                return content
+            except ImportError:
+                # 如果没有OCR模块，返回基本信息
+                return {
+                    'text': [],
+                    'image_info': {
+                        'width': image.shape[1],
+                        'height': image.shape[0],
+                        'channels': image.shape[2] if len(image.shape) == 3 else 1
+                    }
+                }
         except Exception as e:
             return {'error': str(e)}
     
